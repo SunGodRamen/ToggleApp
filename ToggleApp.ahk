@@ -8,6 +8,9 @@ FileRead, lines, %A_ScriptDir%\app_hotkeys.ini
 
 Loop, Parse, lines, `n, `r
 {
+    If (SubStr(A_LoopField, 1, 2) = "//")
+        continue  ; Skip lines starting with //
+
     parts := StrSplit(A_LoopField, ":")
     subparts := StrSplit(parts[2], ",")
     app_hotkeys[parts[1]] := { "process": subparts[1], "query": subparts[2] }
