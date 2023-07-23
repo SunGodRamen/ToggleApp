@@ -15,10 +15,13 @@ Each line consists of three parts:
 
 - The Hotkey: This is the combination of keys that will be used to toggle the application. This is specified before the colon (:). In the examples above, ^!v and ^!c are the hotkeys (representing Ctrl + Alt + V and Ctrl + Alt + C respectively). Here is a brief list of some special characters used in defining hotkeys:
 
-/ ^ : Represents the "Ctrl" key.
-/ ! : Represents the "Alt" key.
-/ + : Represents the "Shift" key.
-/ # : Represents the "Win" (Windows logo) key.
+"^" : Represents the "Ctrl" key.
+
+"!" : Represents the "Alt" key.
+
+"+" : Represents the "Shift" key.
+
+"#" : Represents the "Win" (Windows logo) key.
 
 - The Process Name: The name of the application process, which is specified after the colon and before the comma. This is typically the executable file name.
 
