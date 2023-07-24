@@ -13,15 +13,18 @@ The configuration file should contain key-value pairs structured as follows:
 
 Each line consists of three parts:
 
-- The Hotkey: This is the combination of keys that will be used to toggle the application. This is specified before the colon (:). In the examples above, ^!v and ^!c are the hotkeys (representing Ctrl + Alt + V and Ctrl + Alt + C respectively). Here is a brief list of some special characters used in defining hotkeys:
+- The Hotkey: This is the combination of keys that will be used to toggle the application. This is specified before the colon. In the examples above, ^!v and ^!c are the hotkeys (representing Ctrl + Alt + V and Ctrl + Alt + C respectively). Here is a brief list of some special characters used in defining hotkeys, for more check 
+(https://www.autohotkey.com/docs/v1/KeyList.html):
 
-"^" : Represents the "Ctrl" key.
+```
+Ctrl Key : ^
 
-"!" : Represents the "Alt" key.
+Alt Key : !
 
-"+" : Represents the "Shift" key.
+Shift Key : +
 
-"#" : Represents the "Win" (Windows logo) key.
+Windows Key : #
+```
 
 - The Process Name: The name of the application process, which is specified after the colon and before the comma. This is typically the executable file name.
 
@@ -38,4 +41,4 @@ Press the defined hotkey to toggle the associated application. The behavior is a
 This script can be compiled into an executable file using the AutoHotkey compiler (Ahk2Exe). This makes it portable, allowing you to use the functionality on any Windows machine without needing to install AutoHotkey.
 
 ## Download
-The compiled executable can be downloaded directly from the "Releases" section of this GitHub repository. Simply click on the latest release and download the .exe file attached.
+The compiled executable can be downloaded directly from the "Releases" section of this GitHub repository. Simply click on the latest release and download the .exe file attached. Keep the configuration file in the same directory as the executable.

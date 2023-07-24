@@ -2,7 +2,7 @@
 SendMode Input
 SetWorkingDir %A_ScriptDir%
 
-app_hotkeys := {} 
+app_hotkeys := {}
 
 FileRead, lines, %A_ScriptDir%\app_hotkeys.ini
 
