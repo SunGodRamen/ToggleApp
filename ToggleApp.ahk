@@ -4,60 +4,117 @@ SendMode Input
 SetWorkingDir %A_ScriptDir%
 
 ; Initialize -------------------------------------
-;   Read the app_hotkeys.ini file and store the hotkeys and processes in a dictionary
-;   Validate that the processes exist
+;   Reads the app_hotkeys.ini file and store the hotkeys and processes in a dictionary
 
-app_hotkeys := {}
-
-missing_files := ""
-
-FileRead, lines, %A_ScriptDir%\app_hotkeys.ini
-
-Loop, Parse, lines, `n, `r
+if (!FileExist(A_ScriptDir . "\app_hotkeys.ini"))
 {
-    If (SubStr(A_LoopField, 1, 2) = "//")
-        continue  ; Skip lines starting with //, comments
-
-    parts := StrSplit(A_LoopField, "|")  ; Split with the pipe character
-
-    if InStr(parts[2], "\")
-    {
-        var := StrSplit(parts[2], "\")[1]
-        EnvGet, var_value, % var
-        parts[2] := StrReplace(parts[2], var, var_value)
-    }
-
-    ; Check if the file exists
-    if (FileExist(parts[2]))
-    {
-        ; Assign the second and third parts of the line to "process" and "query"
-        app_hotkeys[parts[1]] := { "process": parts[2], "query": parts[3] }
-    }
-    else
-    {
-        missing_files .= parts[2] . "`n"
-    }
-}
-
-if StrLen(missing_files) != 0
-{
-    MsgBox, % "The following processes do not exist on your machine:`n" . missing_files
+    MsgBox, % "The app_hotkeys.ini file does not exist in the same directory as this script. Exiting."
     ExitApp
 }
 
+backup_config_exists := FileExist(A_ScriptDir . "\app_hotkeys_backup.ini")
+
+; Read the config file
+config_file := A_ScriptDir . "\app_hotkeys.ini"
+app_hotkeys := {}
+line_errors := ""
+Gosub, ReadConfigFile
+
+if StrLen(line_errors) != 0
+{
+    MsgBox, % "The following errors were found:`n" . line_errors . (backup_config_exists) 
+        ? "`nReverting to backup configuration." 
+        : "Backup configuration not found, exiting."
+    
+    if (!backup_config_exists)
+        ExitApp
+
+    ; Read the backup file instead
+    config_file := A_ScriptDir . "\app_hotkeys_backup.ini"
+    line_errors = ""
+    app_hotkeys := {}
+    Gosub, ReadConfigFile    
+}
+else
+{
+    ; Copy the file to the backup file
+    FileCopy, %A_ScriptDir%\app_hotkeys.ini, %A_ScriptDir%\app_hotkeys_backup.ini
+}
+
+; Assign hotkeys
 for hotkey, app in app_hotkeys
     Hotkey, %hotkey%, OpenCloseApp
 
+
+; ReadConfigFile ---------------------------------
+;    This function reads and validates the app_hotkeys.ini file
+;    and stores the hotkeys and processes in a dictionary
+ReadConfigFile:
+    FileRead, lines, %config_file%
+    Loop, Parse, lines, `n, `r
+    {
+        If (SubStr(A_LoopField, 1, 2) = "//")
+            continue  ; Skip lines starting with //, comments
+        
+        If (A_LoopField = "")
+            continue  ; Skip blank lines
+
+        parts := StrSplit(A_LoopField, "|")  ; Split with the pipe character
+
+        if InStr(parts[2], "\")
+        {
+            var := StrSplit(parts[2], "\")[1]
+            EnvGet, var_value, % var
+            parts[2] := StrReplace(parts[2], var, var_value)
+        }
+
+        switch (true) {
+            case (parts.MaxIndex() != 3):
+                line_errors .= "Line " . A_Index . " format is incorrect: " . A_LoopField . "`n"
+                break
+            case (!FileExist(parts[2])):
+                line_errors .= "File doesn't exist at line " . A_Index . ": " . parts[2] . "`n"
+                break
+            case (StrLen(parts[1]) < 1 || StrLen(parts[3]) < 1):
+                line_errors .= "Missing hotkey or query at line " . A_Index . ": " . A_LoopField . "`n"
+                break
+        }
+
+        ; Check if the file exists
+        if (FileExist(parts[2]))
+        {
+            ; Assign the second and third parts of the line to "process" and "query"
+            app_hotkeys[parts[1]] := { "process": parts[2], "query": parts[3] }
+        }
+        else
+        {
+            line_errors .= "File doesn't exist at line " . A_Index . ": " . parts[2] . "`n"
+        }
+    }
 return
 
+; CheckConfigFile ---------------------------------
+;   This function is called every time a hotkey is used
+;   to check if the config file has changed
 
-; Assign Hotkeys ---------------------------------
-; This function is called when a hotkey is pressed
-; It will either start the process or toggle the windows
-; minimize/restore/focus state
+CheckConfigFile:
+    FileRead, new_lines, %A_ScriptDir%\app_hotkeys.ini
+    if (new_lines != lines)  ; If the file has changed
+    {
+        FileRead, lines, %A_ScriptDir%\app_hotkeys.ini  ; Re-read the file
+        Reload  ; Reload the script
+    }
+return
+
+; OpenCloseApp ---------------------------------
+;   This function is called when a hotkey is pressed
+;   It will either start the process or toggle the windows
+;   minimize/restore/focus state
 window_states := {}
 
 OpenCloseApp:
+    Gosub, CheckConfigFile  ; Check if the config file has changed
+
     current_hotkey := RegExReplace(A_ThisHotkey, "i)^(.*) up$", "$1")
     app_to_toggle := app_hotkeys[current_hotkey]
 
