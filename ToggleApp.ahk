@@ -3,53 +3,67 @@
 SendMode Input
 SetWorkingDir %A_ScriptDir%
 
-; Initialize -------------------------------------
-;   Reads the app_hotkeys.ini file and store the hotkeys and processes in a dictionary
+CONFIG_DIR := A_ScriptDir . "\config\"
+CONFIG_FILE_NAME := "process_hotkeys.ini"
+CONFIG_FILE_PATH := CONFIG_DIR . CONFIG_FILE_NAME
+BACKUP_CONFIG_FILE_NAME := "process_hotkeys_backup.ini"
+BACKUP_CONFIG_FILE_PATH := CONFIG_DIR . "process_hotkeys_backup.ini"
 
-if (!FileExist(A_ScriptDir . "\app_hotkeys.ini"))
-{
-    MsgBox, % "The app_hotkeys.ini file does not exist in the same directory as this script. Exiting."
-    ExitApp
-}
+GoSub, Init
 
-backup_config_exists := FileExist(A_ScriptDir . "\app_hotkeys_backup.ini")
-
-; Read the config file
-config_file := A_ScriptDir . "\app_hotkeys.ini"
-app_hotkeys := {}
-line_errors := ""
-Gosub, ReadConfigFile
-
-if StrLen(line_errors) != 0
-{
-    MsgBox, % "The following errors were found:`n" . line_errors . ((backup_config_exists) 
-        ? "`nReverting to backup configuration." 
-        : " Backup configuration not found, exiting.")
-
-    if (!backup_config_exists)
+; Initialize the script
+Init:
+    ; Check if the config file exists
+    if (!FileExist(CONFIG_FILE_PATH))
+    {
+        MsgBox, % "The" . CONFIG_FILE_NAME . " file does not exist in the expected config dir:" . CONFIG_DIR . ". Exiting."
         ExitApp
+    }
+    ; Check if the backup config file exists
+    backup_config_exists := FileExist(BACKUP_CONFIG_FILE_PATH)
+    
+    ; Read the config file
+    config_file := CONFIG_FILE_PATH
+    process_hotkeys := {}
+    total_errors := ""
+    Gosub, ReadConfigFile
+    
+    ; If there were errors, display them and exit or run from the backup file
+    if StrLen(total_errors) != 0
+    {
+        MsgBox, % "The following errors were found:`n" . line_errors . ((backup_config_exists) 
+            ? "`nReverting to backup configuration." 
+            : " Backup configuration at " . BACKUP_CONFIG_FILE_PATH . " not found, exiting.")
+    
+        if (!backup_config_exists)
+            ExitApp
+    
+        ; Read the backup file instead
+        config_file := BACKUP_CONFIG_FILE_PATH
+        process_hotkeys := {}
+        total_errors = ""
+        Gosub, ReadConfigFile
+        If (StrLen(total_errors) > 0)
+        {
+            MsgBox, % "The following errors were found in the backup configuration:`n" . line_errors . "`nExiting."
+            ExitApp
+        }
+    }
+    else
+    {
+        ; Copy the file to the backup file, overwriting if it exists
+        FileCopy, %CONFIG_FILE_PATH%, %BACKUP_CONFIG_FILE_PATH%, 1
+    }
+    
+    ; Assign hotkeys
+    for hotkey, app in process_hotkeys
+        Hotkey, %hotkey%, OpenCloseApp
 
-    ; Read the backup file instead
-    config_file := A_ScriptDir . "\app_hotkeys_backup.ini"
-    app_hotkeys := {}
-    line_errors = ""
-    Gosub, ReadConfigFile    
-}
-else
-{
-    ; Copy the file to the backup file, overwriting if it exists
-    FileCopy, %A_ScriptDir%\app_hotkeys.ini, %A_ScriptDir%\app_hotkeys_backup.ini, 1
-}
-
-; Assign hotkeys
-for hotkey, app in app_hotkeys
-    Hotkey, %hotkey%, OpenCloseApp
 return
 
-; ReadConfigFile ---------------------------------
-;    This function reads and validates the app_hotkeys.ini file
-;    and stores the hotkeys and processes in a dictionary
+; This function reads the config file and stores the hotkeys and processes in a dictionary
 ReadConfigFile:
+    total_errors := ""
     FileRead, lines, %config_file%
     Loop, Parse, lines, `n, `r
     {
@@ -64,95 +78,134 @@ ReadConfigFile:
         ; Split into sections with the pipe character
         config_line_sections := StrSplit(A_LoopField, "|")
 
-        ; Replace any environment variables in the path
-        path_parts := StrSplit(config_line_sections[2], "\")
-        for index, path_part in path_parts
+        ; Validate the line
+        total_errors .= ValidateLineFunction(config_line_sections, A_Index)
+
+        ; If no errors, store the hotkey and process in the dictionary
+        If (StrLen(total_errors) < 1)
         {
-            ; Environment variables are surrounded by % characters
-            if (SubStr(path_part, 1, 1) = "%" && SubStr(path_part, StrLen(path_part), 1) = "%")
+            hotkey := config_line_sections[1]
+            ; Check if the hotkey already exists in the dictionary
+            if (process_hotkeys[hotkey] != "")
             {
-                env_var_name := SubStr(path_part, 2, StrLen(path_part) - 2)  ; Remove the %
-                ; Check if the environment variable exists
-                EnvGet, env_var_value, % env_var_name
-                If (StrLen(env_var_value) > 0)
-                {
-                    ; Replace the environment variable with the value
-                    config_line_sections[2] := StrReplace(config_line_sections[2], path_part, env_var_value)
-                }
+                total_errors .= "Duplicate hotkey at line " . A_Index . ": " . A_LoopField . "`n"
+            }
+            else
+            {
+                process_hotkeys[hotkey] := { "process": config_line_sections[2], "query": config_line_sections[3] }
+            }
+        }
+    }
+return
+
+; This function validates a line from the config file
+ValidateLineFunction(config_line_sections, line_index) {
+    ; Initialize error string for this line
+    line_errors := ""
+
+    ; Check if there are 3 config_line_sections
+    If (config_line_sections.MaxIndex() != 3)
+    {
+        line_errors .= "Line " . A_Index . " incorrect number of sections: " . A_LoopField . "`n"
+    }
+    Else
+    {
+        ; Check if the hotkey is specified
+        If (StrLen(config_line_sections[1]) < 1)
+            line_errors .= "Missing hotkey at line " . A_Index . ": " . A_LoopField . "`n"
+
+        ; Check if the process is specified
+        If (StrLen(config_line_sections[2]) < 1)
+        {
+            line_errors .= "Missing process at line " . A_Index . ": " . A_LoopField . "`n"
+        }
+        Else
+        {
+            ; If any environment variables are specified
+            Gosub, TranslateEnvVars
+
+            ; Check if the process is a valid path
+            processPath := config_line_sections[2]
+            SplitPath, processPath, name
+            If (StrLen(name) < 1)
+            {
+                line_errors .= "Invalid process path at line " . A_Index . ": " . A_LoopField . "`n"
+            }
+            Else
+            {
+                ; Check if the process exists
+                If (!FileExist(config_line_sections[2]))
+                    line_errors .= "Process does not exist at line " . A_Index . ": " . A_LoopField . "`n"
             }
         }
 
-        ; Validate the line
-        Switch 
+        ; Check if the query is specified
+        If (StrLen(config_line_sections[3]) < 1)
+            line_errors .= "Missing query at line " . A_Index . ": " . A_LoopField . "`n"
+    }
+ 
+    ; Return any errors found
+    return line_errors
+}
+
+; This function interpolates environment variables in the path
+TranslateEnvVars:
+    ; Split the path into parts
+    path_parts := StrSplit(config_line_sections[2], "\")
+    for index, path_part in path_parts
+    {
+        ; Environment variables are surrounded by % characters
+        if (SubStr(path_part, 1, 1) = "%" && SubStr(path_part, StrLen(path_part), 1) = "%")
         {
-            ; Check if there are 3 config_line_sections
-            Case (config_line_sections.MaxIndex() != 3):
-                line_errors .= "Line " . A_Index . " format is incorrect: " . A_LoopField . "`n"
-
-            ; Check if the hotkey is specified
-            Case (StrLen(config_line_sections[1]) < 1):
-                line_errors .= "Missing hotkey at line " . A_Index . ": " . A_LoopField . "`n"
-
-            ; Check if the process is specified
-            Case (StrLen(config_line_sections[2]) < 1):
-                line_errors .= "Missing process at line " . A_Index . ": " . A_LoopField . "`n"
-
-            ; Check if the query is specified
-            Case (StrLen(config_line_sections[3]) < 1):
-                line_errors .= "Missing query at line " . A_Index . ": " . A_LoopField . "`n"
-
-            ; Check if the process exists
-            Case (!FileExist(config_line_sections[2])):
-                line_errors .= "Process does not exist at line " . A_Index . ": " . A_LoopField . "`n"
-
-            ; if no errors, store the hotkey and process in the dictionary
-            Default:
-                app_hotkeys[config_line_sections[1]] := { "process": config_line_sections[2], "query": config_line_sections[3] }
+            env_var_name := SubStr(path_part, 2, StrLen(path_part) - 2)  ; Remove the %
+            ; Check if the environment variable exists
+            EnvGet, env_var_value, % env_var_name
+            If (StrLen(env_var_value) > 0)
+            {
+                ; Replace the environment variable with the value
+                config_line_sections[2] := StrReplace(config_line_sections[2], path_part, env_var_value)
+            }
+            Else
+            {
+                ; If the environment variable doesn't exist, add an error
+                line_errors .= "Environment variable " . env_var_name . " does not exist at line " . A_Index . ": " . A_LoopField . "`n"
+            }
         }
     }
 return
 
-; CheckConfigFile ---------------------------------
-;   This function is called every time a hotkey is used
-;   to check if the config file has changed
 
+; This function checks if the config file has changed and reloads the script if it has
 CheckConfigFile:
-    FileRead, new_lines, %A_ScriptDir%\app_hotkeys.ini
+    FileRead, new_lines, %CONFIG_FILE_PATH%
     if (new_lines != lines)  ; If the file has changed
-    {
-        FileRead, lines, %A_ScriptDir%\app_hotkeys.ini  ; Re-read the file
         Reload  ; Reload the script
-    }
 return
 
-; OpenCloseApp ---------------------------------
-;   This function is called when a hotkey is pressed
-;   It will either start the process or toggle the window_ids
-;   minimize/restore/focus state
 
-window_states := {}
-
+; This function runs every time a hotkey is pressed and
+; toggles the window states of the specified process
 OpenCloseApp:
     ; Check if the config file has changed
     Gosub, CheckConfigFile
 
     current_hotkey := RegExReplace(A_ThisHotkey, "i)^(.*) up$", "$1")
-    app_to_toggle := app_hotkeys[current_hotkey]
+    process_to_toggle := process_hotkeys[current_hotkey]
 
     ; Get the process name from the full path
-    processPath := app_to_toggle["process"]
+    processPath := process_to_toggle["process"]
     SplitPath, processPath, name
 
     Process, Exist, % name
     if (ErrorLevel = 0)
     {
         ; The process isn't running, so start it
-        Run, % app_to_toggle["process"]
+        Run, % process_to_toggle["process"]
     }
     else
     {
         ; The process is running, query for the window IDs
-        WinGet, id, list, % app_to_toggle["query"]
+        WinGet, id, list, % process_to_toggle["query"]
 
         window_states := {}  ; Reset the window states for this process
         window_ids := []  ; Array to hold the window IDs in the order they are found
@@ -242,9 +295,9 @@ OpenCloseApp:
                 }
             }
             
+            ; If there is a next window to activate,
             if (next_window != "")
             {
-                ; If there is a next window to activate,
                 ; If the window is not minimized, activate it
                 WinGet, MinMax, MinMax, ahk_id %next_window%
                 if (MinMax != -1)
