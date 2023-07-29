@@ -22,29 +22,29 @@ Gosub, ReadConfigFile
 
 if StrLen(line_errors) != 0
 {
-    MsgBox, % "The following errors were found:`n" . line_errors . (backup_config_exists) 
+    MsgBox, % "The following errors were found:`n" . line_errors . ((backup_config_exists) 
         ? "`nReverting to backup configuration." 
-        : "Backup configuration not found, exiting."
-    
+        : " Backup configuration not found, exiting.")
+
     if (!backup_config_exists)
         ExitApp
 
     ; Read the backup file instead
     config_file := A_ScriptDir . "\app_hotkeys_backup.ini"
-    line_errors = ""
     app_hotkeys := {}
+    line_errors = ""
     Gosub, ReadConfigFile    
 }
 else
 {
-    ; Copy the file to the backup file
-    FileCopy, %A_ScriptDir%\app_hotkeys.ini, %A_ScriptDir%\app_hotkeys_backup.ini
+    ; Copy the file to the backup file, overwriting if it exists
+    FileCopy, %A_ScriptDir%\app_hotkeys.ini, %A_ScriptDir%\app_hotkeys_backup.ini, 1
 }
 
 ; Assign hotkeys
 for hotkey, app in app_hotkeys
     Hotkey, %hotkey%, OpenCloseApp
-
+return
 
 ; ReadConfigFile ---------------------------------
 ;    This function reads and validates the app_hotkeys.ini file
@@ -53,42 +53,61 @@ ReadConfigFile:
     FileRead, lines, %config_file%
     Loop, Parse, lines, `n, `r
     {
+        ; Skip lines starting with // as they are comments
         If (SubStr(A_LoopField, 1, 2) = "//")
-            continue  ; Skip lines starting with //, comments
+            continue
         
+        ; Skip blank lines
         If (A_LoopField = "")
-            continue  ; Skip blank lines
+            continue
 
-        parts := StrSplit(A_LoopField, "|")  ; Split with the pipe character
+        ; Split into sections with the pipe character
+        config_line_sections := StrSplit(A_LoopField, "|")
 
-        if InStr(parts[2], "\")
+        ; Replace any environment variables in the path
+        path_parts := StrSplit(config_line_sections[2], "\")
+        for index, path_part in path_parts
         {
-            var := StrSplit(parts[2], "\")[1]
-            EnvGet, var_value, % var
-            parts[2] := StrReplace(parts[2], var, var_value)
+            ; Environment variables are surrounded by % characters
+            if (SubStr(path_part, 1, 1) = "%" && SubStr(path_part, StrLen(path_part), 1) = "%")
+            {
+                env_var_name := SubStr(path_part, 2, StrLen(path_part) - 2)  ; Remove the %
+                ; Check if the environment variable exists
+                EnvGet, env_var_value, % env_var_name
+                If (StrLen(env_var_value) > 0)
+                {
+                    ; Replace the environment variable with the value
+                    config_line_sections[2] := StrReplace(config_line_sections[2], path_part, env_var_value)
+                }
+            }
         }
 
-        switch (true) {
-            case (parts.MaxIndex() != 3):
+        ; Validate the line
+        Switch 
+        {
+            ; Check if there are 3 config_line_sections
+            Case (config_line_sections.MaxIndex() != 3):
                 line_errors .= "Line " . A_Index . " format is incorrect: " . A_LoopField . "`n"
-                break
-            case (!FileExist(parts[2])):
-                line_errors .= "File doesn't exist at line " . A_Index . ": " . parts[2] . "`n"
-                break
-            case (StrLen(parts[1]) < 1 || StrLen(parts[3]) < 1):
-                line_errors .= "Missing hotkey or query at line " . A_Index . ": " . A_LoopField . "`n"
-                break
-        }
 
-        ; Check if the file exists
-        if (FileExist(parts[2]))
-        {
-            ; Assign the second and third parts of the line to "process" and "query"
-            app_hotkeys[parts[1]] := { "process": parts[2], "query": parts[3] }
-        }
-        else
-        {
-            line_errors .= "File doesn't exist at line " . A_Index . ": " . parts[2] . "`n"
+            ; Check if the hotkey is specified
+            Case (StrLen(config_line_sections[1]) < 1):
+                line_errors .= "Missing hotkey at line " . A_Index . ": " . A_LoopField . "`n"
+
+            ; Check if the process is specified
+            Case (StrLen(config_line_sections[2]) < 1):
+                line_errors .= "Missing process at line " . A_Index . ": " . A_LoopField . "`n"
+
+            ; Check if the query is specified
+            Case (StrLen(config_line_sections[3]) < 1):
+                line_errors .= "Missing query at line " . A_Index . ": " . A_LoopField . "`n"
+
+            ; Check if the process exists
+            Case (!FileExist(config_line_sections[2])):
+                line_errors .= "Process does not exist at line " . A_Index . ": " . A_LoopField . "`n"
+
+            ; if no errors, store the hotkey and process in the dictionary
+            Default:
+                app_hotkeys[config_line_sections[1]] := { "process": config_line_sections[2], "query": config_line_sections[3] }
         }
     }
 return
@@ -108,12 +127,14 @@ return
 
 ; OpenCloseApp ---------------------------------
 ;   This function is called when a hotkey is pressed
-;   It will either start the process or toggle the windows
+;   It will either start the process or toggle the window_ids
 ;   minimize/restore/focus state
+
 window_states := {}
 
 OpenCloseApp:
-    Gosub, CheckConfigFile  ; Check if the config file has changed
+    ; Check if the config file has changed
+    Gosub, CheckConfigFile
 
     current_hotkey := RegExReplace(A_ThisHotkey, "i)^(.*) up$", "$1")
     app_to_toggle := app_hotkeys[current_hotkey]
@@ -134,12 +155,13 @@ OpenCloseApp:
         WinGet, id, list, % app_to_toggle["query"]
 
         window_states := {}  ; Reset the window states for this process
-        windows := []  ; Array to hold the window IDs in the order they are found
+        window_ids := []  ; Array to hold the window IDs in the order they are found
 
         Loop, %id%
         {
             this_id := id%A_Index%
-            windows.Push(this_id)  ; Push the window IDs into the array in order
+            ; Push the window IDs into the array in order
+            window_ids.Push(this_id)  
 
             ; Determine if this window is active or minimized
             WinGet, MinMax, MinMax, ahk_id %this_id%
@@ -148,7 +170,7 @@ OpenCloseApp:
                 ; If the window is active, mark it as active in the window states
                 window_states[this_id] := "active"
             }
-            else if (MinMax = -1)  ; If the window is minimized
+            else if (MinMax = -1)
             {
                 ; If the window is minimized, mark it as minimized in the window states
                 window_states[this_id] := "minimized"
@@ -180,7 +202,7 @@ OpenCloseApp:
 
         if (all_minimized)
         {
-            ; If all windows are minimized, restore all of them
+            ; If all window_ids are minimized, restore all of them
             for window_id, state in window_states
             {
                 WinRestore, ahk_id %window_id%
@@ -188,16 +210,16 @@ OpenCloseApp:
         }
         else if (all_inactive)
         {
-            ; If all windows are inactive, activate the first one
-            first_window := windows[1]
+            ; If all window_ids are inactive, activate the first one
+            first_window := window_ids[1]
             WinActivate, ahk_id %first_window%
             window_states[first_window] := "active"
         }
         else
         {
-            ; If not all windows are minimized or inactive, find the active window and minimize it, then activate the next window in the list
-            next_window := ""  ; This will hold the ID of the next window to activate
-            for index, window_id in windows
+            ; If not all window_ids are minimized or inactive, find the active window and minimize it, then activate the next window in the list
+            next_window := ""
+            for index, window_id in window_ids
             {
                 if (window_states[window_id] = "active")
                 {
@@ -206,15 +228,15 @@ OpenCloseApp:
                     window_states[window_id] := "minimized"
                     
                     ; Set the next window to activate
-                    if (windows.MaxIndex() = index)
+                    if (window_ids.MaxIndex() = index)
                     {
                         ; If this is the last window in the list, the next window is the first window
-                        next_window := windows[1]
+                        next_window := window_ids[1]
                     }
                     else
                     {
                         ; Otherwise, the next window is the window after this one in the list
-                        next_window := windows[index + 1]
+                        next_window := window_ids[index + 1]
                     }
                     break
                 }
@@ -222,9 +244,10 @@ OpenCloseApp:
             
             if (next_window != "")
             {
-                ; If there is a next window to activate, activate it
+                ; If there is a next window to activate,
+                ; If the window is not minimized, activate it
                 WinGet, MinMax, MinMax, ahk_id %next_window%
-                if (MinMax != -1)  ; If the window is not minimized
+                if (MinMax != -1)
                 {
                     WinActivate, ahk_id %next_window%
                     window_states[next_window] := "active"
