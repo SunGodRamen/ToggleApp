@@ -3,14 +3,17 @@
 SendMode Input
 SetWorkingDir %A_ScriptDir%
 
+; Constants
 CONFIG_DIR := A_ScriptDir . "\config\"
-CONFIG_FILE_NAME := "process_hotkeys.ini"
-CONFIG_FILE_PATH := CONFIG_DIR . CONFIG_FILE_NAME
-BACKUP_CONFIG_FILE_NAME := "process_hotkeys_backup.ini"
-BACKUP_CONFIG_FILE_PATH := CONFIG_DIR . "process_hotkeys_backup.ini"
+CONFIG_FILE_NAME := "process_hotkeys"
+BACKUP_CONFIG_FILE_NAME := CONFIG_FILE_NAME . "_backup"
+CONFIG_FILE_PATH := CONFIG_DIR . CONFIG_FILE_NAME . ".ini"
+BACKUP_CONFIG_FILE_PATH := CONFIG_DIR . BACKUP_CONFIG_FILE_NAME . ".ini"
+
+; flag to avoid processing the hotkey parameter twice
+hotkey_param_processed := false
 
 GoSub, Init
-
 ; Initialize the script
 Init:
     ; Check if the config file exists
@@ -19,6 +22,10 @@ Init:
         MsgBox, % "The" . CONFIG_FILE_NAME . " file does not exist in the expected config dir:" . CONFIG_DIR . ". Exiting."
         ExitApp
     }
+
+    ; check when the config file was last modified
+    FileGetTime, last_config_mod_time, %CONFIG_FILE_PATH%, M
+
     ; Check if the backup config file exists
     backup_config_exists := FileExist(BACKUP_CONFIG_FILE_PATH)
     
@@ -31,7 +38,7 @@ Init:
     ; If there were errors, display them and exit or run from the backup file
     if StrLen(total_errors) != 0
     {
-        MsgBox, % "The following errors were found:`n" . line_errors . ((backup_config_exists) 
+        MsgBox, % "The following errors were found:`n" . total_errors . ((backup_config_exists) 
             ? "`nReverting to backup configuration." 
             : " Backup configuration at " . BACKUP_CONFIG_FILE_PATH . " not found, exiting.")
     
@@ -57,7 +64,19 @@ Init:
     
     ; Assign hotkeys
     for hotkey, app in process_hotkeys
-        Hotkey, %hotkey%, OpenCloseApp
+        Hotkey, %hotkey%, OpenCloseAppWrapper
+
+    ; Check if the script was started with a hotkey parameter
+    ; as in the case of the script being reloaded
+    if (A_Args.Length() > 0 && !hotkey_param_processed)
+    {
+        hotkey_param := A_Args[1]
+        if (process_hotkeys[hotkey_param] != "")
+        {
+            OpenCloseAppFunction(hotkey_param, process_hotkeys)
+            hotkey_param_processed := true
+        }
+    }
 
 return
 
@@ -121,8 +140,12 @@ ValidateLineFunction(config_line_sections, line_index) {
         }
         Else
         {
-            ; If any environment variables are specified
-            Gosub, TranslateEnvVars
+            ; If any environment variables are specified by % characters, translate them
+            If (InStr(config_line_sections[2], "%"))
+                config_line_sections[2] := TranslateEnvVarsFunction(config_line_sections[2])
+            ; If config_line_sections[2] is not a valid environment variable, it will still have % characters
+            If (InStr(config_line_sections[2], "%"))
+                line_errors .= "Invalid environment variable at line " . A_Index . ": " . A_LoopField . "`n"
 
             ; Check if the process is a valid path
             processPath := config_line_sections[2]
@@ -149,47 +172,58 @@ ValidateLineFunction(config_line_sections, line_index) {
 }
 
 ; This function interpolates environment variables in the path
-TranslateEnvVars:
+TranslateEnvVarsFunction(variable_path) {
     ; Split the path into parts
-    path_parts := StrSplit(config_line_sections[2], "\")
-    for index, path_part in path_parts
+    path_sections := StrSplit(variable_path, "\")
+    for index, path_section in path_sections
     {
         ; Environment variables are surrounded by % characters
-        if (SubStr(path_part, 1, 1) = "%" && SubStr(path_part, StrLen(path_part), 1) = "%")
+        if (SubStr(path_section, 1, 1) = "%" && SubStr(path_section, StrLen(path_part), 1) = "%")
         {
-            env_var_name := SubStr(path_part, 2, StrLen(path_part) - 2)  ; Remove the %
+            env_var_name := SubStr(path_section, 2, StrLen(path_section) - 2)  ; Remove the %
             ; Check if the environment variable exists
             EnvGet, env_var_value, % env_var_name
             If (StrLen(env_var_value) > 0)
             {
                 ; Replace the environment variable with the value
-                config_line_sections[2] := StrReplace(config_line_sections[2], path_part, env_var_value)
+                translated_path := StrReplace(variable_path, path_section, env_var_value)
             }
             Else
             {
-                ; If the environment variable doesn't exist, add an error
-                line_errors .= "Environment variable " . env_var_name . " does not exist at line " . A_Index . ": " . A_LoopField . "`n"
+                ; If the environment variable doesn't exist, return the original path
+                translated_path := variable_path
             }
         }
     }
-return
-
+    return translated_path
+}
 
 ; This function checks if the config file has changed and reloads the script if it has
 CheckConfigFile:
-    FileRead, new_lines, %CONFIG_FILE_PATH%
-    if (new_lines != lines)  ; If the file has changed
-        Reload  ; Reload the script
+    FileGetTime, curr_config_mod_time, %CONFIG_FILE_PATH%, M
+    ; If the file has been modified since init, reload the script
+    if (curr_config_mod_time != last_config_mod_time)
+    {
+        ; Run the script with the hotkey as a parameter
+        params := A_ScriptName . " " . A_ThisHotkey
+        Run, %A_AhkPath% %params%
+        Exit  ; Exit the current script
+    }
 return
 
 
 ; This function runs every time a hotkey is pressed and
 ; toggles the window states of the specified process
-OpenCloseApp:
+OpenCloseAppWrapper:
     ; Check if the config file has changed
     Gosub, CheckConfigFile
+    ; Run the function to toggle the window states
+    OpenCloseAppFunction(A_ThisHotkey, process_hotkeys)
+return
 
-    current_hotkey := RegExReplace(A_ThisHotkey, "i)^(.*) up$", "$1")
+OpenCloseAppFunction(hotkey, process_hotkeys) {
+
+    current_hotkey := RegExReplace(hotkey, "i)^(.*) up$", "$1")
     process_to_toggle := process_hotkeys[current_hotkey]
 
     ; Get the process name from the full path
@@ -308,4 +342,5 @@ OpenCloseApp:
             }
         }
     }
-return
+    return
+}
