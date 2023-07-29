@@ -163,24 +163,11 @@ OpenCloseApp:
             {
                 ; If there is a next window to activate, restore it (if necessary) and activate it
                 WinGet, MinMax, MinMax, ahk_id %next_window%
-                if (MinMax = -1)  ; If the window is minimized
-                    WinRestore, ahk_id %next_window%
-                
-                WinActivate, ahk_id %next_window%
-                window_states[next_window] := "active"
-            }
-
-            Sleep, 100  ; Let Windows do its thing
-
-            ; Check if Windows brought another window into focus
-            WinGetActiveTitle, active_window_title
-            WinGet, active_window_id, ID, %active_window_title%
-
-            ; If it did, and that window is one of ours, minimize it as well
-            if (active_window_id in windows)
-            {
-                WinMinimize, ahk_id %active_window_id%
-                window_states[active_window_id] := "minimized"
+                if (MinMax != -1)  ; If the window is not minimized
+                {
+                    WinActivate, ahk_id %next_window%
+                    window_states[next_window] := "active"
+                }
             }
         }
     }
