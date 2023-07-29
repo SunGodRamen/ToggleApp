@@ -3,13 +3,10 @@
 SendMode Input
 SetWorkingDir %A_ScriptDir%
 
+; Initialize -------------------------------------
+;   Read the app_hotkeys.ini file and store the hotkeys and processes in a dictionary
+;   Validate that the processes exist
 
-; Read the app_hotkeys.ini file and store the hotkeys and processes in a dictionary
-; Validate that the processes exist
-
-;todos:
-; better error handling: syntax error checking
-; reload script when ini file is changed, if there are errors, report them and don't reload
 app_hotkeys := {}
 
 missing_files := ""
@@ -19,26 +16,26 @@ FileRead, lines, %A_ScriptDir%\app_hotkeys.ini
 Loop, Parse, lines, `n, `r
 {
     If (SubStr(A_LoopField, 1, 2) = "//")
-        continue  ; Skip lines starting with //
+        continue  ; Skip lines starting with //, comments
 
-    parts := StrSplit(A_LoopField, ":")
-    subparts := StrSplit(parts[2], ",")
+    parts := StrSplit(A_LoopField, "|")  ; Split with the pipe character
 
-    if InStr(subparts[1], "\")
+    if InStr(parts[2], "\")
     {
-        var := StrSplit(subparts[1], "\")[1]
+        var := StrSplit(parts[2], "\")[1]
         EnvGet, var_value, % var
-        subparts[1] := StrReplace(subparts[1], var, var_value)
+        parts[2] := StrReplace(parts[2], var, var_value)
     }
 
     ; Check if the file exists
-    if (FileExist(subparts[1]))
+    if (FileExist(parts[2]))
     {
-        app_hotkeys[parts[1]] := { "process": subparts[1], "query": subparts[2] }
+        ; Assign the second and third parts of the line to "process" and "query"
+        app_hotkeys[parts[1]] := { "process": parts[2], "query": parts[3] }
     }
     else
     {
-        missing_files .= subparts[1] . "`n"
+        missing_files .= parts[2] . "`n"
     }
 }
 
@@ -54,7 +51,10 @@ for hotkey, app in app_hotkeys
 return
 
 
+; Assign Hotkeys ---------------------------------
 ; This function is called when a hotkey is pressed
+; It will either start the process or toggle the windows
+; minimize/restore/focus state
 window_states := {}
 
 OpenCloseApp:
@@ -73,7 +73,7 @@ OpenCloseApp:
     }
     else
     {
-        ; The process is running
+        ; The process is running, query for the window IDs
         WinGet, id, list, % app_to_toggle["query"]
 
         window_states := {}  ; Reset the window states for this process
@@ -114,6 +114,10 @@ OpenCloseApp:
             if (state != "inactive")
             {
                 all_inactive := false
+            }
+            if (!all_minimized && !all_inactive)
+            {
+                break
             }
         }
 
@@ -161,7 +165,7 @@ OpenCloseApp:
             
             if (next_window != "")
             {
-                ; If there is a next window to activate, restore it (if necessary) and activate it
+                ; If there is a next window to activate, activate it
                 WinGet, MinMax, MinMax, ahk_id %next_window%
                 if (MinMax != -1)  ; If the window is not minimized
                 {
